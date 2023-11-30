@@ -29,3 +29,8 @@ This Rust code sets up the backend for a decentralized messaging application on 
    - Exports interfaces compatible with the IC platform.
 
 In essence, it forms the backend logic for a decentralized messaging system, enabling users to interact with messages, express opinions through voting, and earn rewards on the Internet Computer.
+
+Deployed canisters.
+URLs:
+  Backend canister via Candid interface:
+    icp_rust_boilerplate_backend: http://127.0.0.1:4943/?canisterId=bd3sg-teaaa-aaaaa-qaaba-cai&id=bkyz2-fmaaa-aaaaa-qaaaq-cai
