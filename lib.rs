@@ -22,6 +22,56 @@ struct Message {
     upvoted_users: Vec<String>,
     downvoted_users: Vec<String>,
 }
+#[derive(candid::CandidType, Clone, Serialize, Deserialize, Default)]
+struct Comment {
+    id: u64,
+    message_id: u64,
+    user: String,
+    content: String,
+    created_at: u64,
+}
+
+impl Storable for Comment {
+    fn to_bytes(&self) -> Cow<[u8]> {
+        Cow::Owned(Encode!(self).unwrap())
+    }
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Self {
+        Decode!(bytes.as_ref(), Self).unwrap()
+    }
+}
+
+impl BoundedStorable for Comment {
+    const MAX_SIZE: u32 = 1024;
+    const IS_FIXED_SIZE: bool = false;
+}
+
+#[derive(candid::CandidType,Clone, Serialize, Deserialize, Default)]
+struct Report {
+    id: u64,
+    message_id: u64,
+    reported_by: String,
+    reason: String,
+    reported_at: u64,
+    reviewed: bool,
+}
+
+impl Storable for Report {
+    fn to_bytes(&self) -> Cow<[u8]> {
+        Cow::Owned(Encode!(self).unwrap())
+    }
+
+    fn from_bytes(bytes: Cow<[u8]>) -> Self {
+        Decode!(bytes.as_ref(), Self).unwrap()
+    }
+}
+
+impl BoundedStorable for Report {
+    const MAX_SIZE: u32 = 2048;
+    const IS_FIXED_SIZE: bool = false;
+}
+
+
 
 // Implement Storable and BoundedStorable for Message
 impl Storable for Message {
@@ -105,6 +155,12 @@ thread_local! {
         RefCell::new(StableBTreeMap::init(
             MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(2)))
         ));
+    static COMMENTS: RefCell<StableBTreeMap<u64, Comment, Memory>> = RefCell::new(
+        StableBTreeMap::init(MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(3))))
+    );
+    static REPORTS: RefCell<StableBTreeMap<u64, Report, Memory>> = RefCell::new(
+        StableBTreeMap::init(MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(4))))
+    );
 }
 
 
@@ -297,6 +353,110 @@ fn reward_upvote(username: String) -> Result<(), Error> {
         }
     })
 }
+#[ic_cdk::query]
+fn search_messages(search_term: Option<String>, min_upvotes: Option<u64>, max_downvotes: Option<u64>, recent: Option<u64>) -> Vec<Message> {
+    let now = time();
+    STORAGE.with(|s| {
+        s.borrow()
+         .iter()
+         .filter(|(_, message)| {
+             let matches_term = search_term.as_ref().map_or(true, |term| {
+                 message.title.contains(term) || message.body.contains(term)
+             });
+             let matches_upvotes = min_upvotes.map_or(true, |min| message.upvotes >= min);
+             let matches_downvotes = max_downvotes.map_or(true, |max| message.downvotes <= max);
+             let matches_recent = recent.map_or(true, |hours| now - message.created_at <= hours * 3600);
+
+             matches_term && matches_upvotes && matches_downvotes && matches_recent
+         })
+         .map(|(_, message)| message.clone())
+         .collect()
+    })
+}
+
+
+#[ic_cdk::update]
+fn add_comment(message_id: u64, user: String, content: String) -> Result<Comment, Error> {
+    let id = ID_COUNTER.with(|counter| {
+        let current_value = *counter.borrow().get();
+        let _ = counter.borrow_mut().set(current_value + 1);
+        current_value + 1
+    });
+
+    let comment = Comment {
+        id,
+        message_id,
+        user,
+        content,
+        created_at: time(),
+    };
+    COMMENTS.with(|c| c.borrow_mut().insert(id, comment.clone()));
+    Ok(comment)
+}
+
+
+#[ic_cdk::query]
+fn get_comments(message_id: u64) -> Vec<Comment> {
+    COMMENTS.with(|c| {
+        c.borrow()
+         .iter()
+         .filter(|(_, comment)| comment.message_id == message_id)
+         .map(|(_, comment)| comment.clone())
+         .collect()
+    })
+}
+
+
+#[ic_cdk::update]
+fn delete_comment(comment_id: u64) -> Result<(), Error> {
+    match COMMENTS.with(|c| c.borrow_mut().remove(&comment_id)) {
+        Some(_) => Ok(()),
+        None => Err(Error::NotFound {
+            msg: format!("Comment with id={} not found.", comment_id),
+        }),
+    }
+}
+#[ic_cdk::update]
+fn report_message(message_id: u64, reported_by: String, reason: String) -> Result<Report, Error> {
+    let report_id = ID_COUNTER.with(|counter| {
+        let current_value = *counter.borrow().get();
+        let _ = counter.borrow_mut().set(current_value + 1);
+        current_value + 1
+    });
+
+    let report = Report {
+        id: report_id,
+        message_id,
+        reported_by,
+        reason,
+        reported_at: time(),
+        reviewed: false,
+    };
+
+    REPORTS.with(|r| r.borrow_mut().insert(report_id, report.clone()));
+    Ok(report)
+}
+
+#[ic_cdk::update]
+fn review_report(report_id: u64, _action: String) -> Result<(), Error> {
+    REPORTS.with(|r| {
+        let mut reports = r.borrow_mut();
+        if let Some(mut report) = reports.remove(&report_id) {
+            report.reviewed = true;
+            // Perform action based on the provided string, e.g., delete message, issue warning, etc.
+
+            // Re-insert the updated report
+            reports.insert(report_id, report);
+            Ok(())
+        } else {
+            Err(Error::NotFound {
+                msg: format!("Report with id={} not found.", report_id),
+            })
+        }
+    })
+}
+
+
 
 
 
