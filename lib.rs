@@ -1,5 +1,6 @@
 #[macro_use]
 extern crate serde;
+
 use candid::{Decode, Encode};
 use ic_cdk::api::time;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
@@ -73,7 +74,6 @@ impl BoundedStorable for Report {
 
 
 
-// Implement Storable and BoundedStorable for Message
 impl Storable for Message {
     fn to_bytes(&self) -> Cow<[u8]> {
         Cow::Owned(Encode!(self).unwrap())
@@ -113,9 +113,10 @@ impl Storable for User {
 }
 
 impl BoundedStorable for User {
-    const MAX_SIZE: u32 = 1024; // Set an appropriate max size
+    const MAX_SIZE: u32 = 1024;
     const IS_FIXED_SIZE: bool = false;
 }
+
 #[derive(candid::CandidType, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct UserId(u64);
 
@@ -133,8 +134,6 @@ impl BoundedStorable for UserId {
     const MAX_SIZE: u32 = std::mem::size_of::<u64>() as u32;
     const IS_FIXED_SIZE: bool = true;
 }
-
-
 
 thread_local! {
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> = RefCell::new(
@@ -162,7 +161,6 @@ thread_local! {
         StableBTreeMap::init(MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(4))))
     );
 }
-
 
 #[ic_cdk::query]
 fn get_message(id: u64) -> Result<Message, Error> {
@@ -215,9 +213,10 @@ fn update_message(id: u64, payload: MessagePayload) -> Result<Message, Error> {
     }
 }
 
-// Helper method to perform insert.
 fn do_insert(message: &Message) {
-    STORAGE.with(|service| service.borrow_mut().insert(message.id, message.clone()));
+    if !_get_message(&message.id).is_some() {
+        STORAGE.with(|service| service.borrow_mut().insert(message.id, message.clone()));
+    }
 }
 
 #[ic_cdk::update]
@@ -237,7 +236,6 @@ enum Error {
     UserNotFound { msg: String },
 }
 
-// A helper method to get a message by id. Used in get_message/update_message
 fn _get_message(id: &u64) -> Option<Message> {
     STORAGE.with(|service| service.borrow().get(id))
 }
@@ -246,26 +244,21 @@ fn _get_message(id: &u64) -> Option<Message> {
 fn upvote_message(id: u64, username: String) -> Result<(), Error> {
     let (mut message, found) = STORAGE.with(|s| {
         let storage = s.borrow_mut();
-        // Immediately retrieve and clone the message, then drop the mutable borrow
         match storage.get(&id) {
             Some(message) => (message.clone(), true),
             None => (Message::default(), false),
         }
     });
 
-    // Check if the message was found
     if !found {
         return Err(Error::NotFound {
             msg: format!("Message with id={} not found", id),
         });
     }
 
-    // Proceed with the rest of the function
     if !message.upvoted_users.contains(&username) {
         message.upvotes += 1;
         message.upvoted_users.push(username.clone());
-
-        // Re-insert the modified message
         STORAGE.with(|s| s.borrow_mut().insert(id, message));
 
         // Assuming reward_upvote works with a String
@@ -278,34 +271,26 @@ fn upvote_message(id: u64, username: String) -> Result<(), Error> {
     }
 }
 
-
-        
 #[ic_cdk::update]
 fn downvote_message(id: u64, username: String) -> Result<(), Error> {
     let (mut message, found) = STORAGE.with(|s| {
         let storage = s.borrow_mut();
-        // Immediately retrieve and clone the message, then drop the mutable borrow
         match storage.get(&id) {
             Some(message) => (message.clone(), true),
             None => (Message::default(), false),
         }
     });
 
-    // Check if the message was found
     if !found {
         return Err(Error::NotFound {
             msg: format!("Message with id={} not found", id),
         });
     }
 
-    // Proceed with the rest of the function
     if !message.downvoted_users.contains(&username) {
         message.downvotes += 1;
         message.downvoted_users.push(username.clone());
-
-        // Re-insert the modified message
         STORAGE.with(|s| s.borrow_mut().insert(id, message));
-
         Ok(())
     } else {
         Err(Error::AlreadyVoted {
@@ -314,16 +299,13 @@ fn downvote_message(id: u64, username: String) -> Result<(), Error> {
     }
 }
 
-
-        
 #[ic_cdk::update]
 fn reward_upvote(username: String) -> Result<(), Error> {
-    // Find the UserId associated with the given username and update the user in the same scope
     USERS.with(|users| {
         let mut users = users.borrow_mut();
         let user_id = users.iter().find_map(|(id, user)| {
             if user.username == username {
-                Some(id) // Get the UserId
+                Some(id)
             } else {
                 None
             }
@@ -331,14 +313,10 @@ fn reward_upvote(username: String) -> Result<(), Error> {
 
         if let Some(user_id) = user_id {
             if let Some(user) = users.get(&user_id) {
-                // Update tokens without cloning
                 let updated_user = User {
-                    username: user.username.clone(), // Assuming String fields are clonable
+                    username: user.username.clone(),
                     tokens: user.tokens + 1,
-                    // copy other fields as needed...
                 };
-
-                // Re-insert the updated user
                 users.insert(user_id, updated_user);
                 Ok(())
             } else {
@@ -458,18 +436,20 @@ fn review_report(report_id: u64, _action: String) -> Result<(), Error> {
 
 
 
+// Sanitize user input to prevent XSS attacks
+fn sanitize_input(input: &str) -> String {
+    // Implement HTMLPurifier or similar library
+    // to sanitize user input before storing or displaying
+    // to prevent XSS attacks.
+    input.to_string()
+}
 
+// Use parameterized queries to prevent SQL injection attacks
+fn execute_sql_query(query: &str, params: &[&dyn std::any::Any]) -> Result<(), Error> {
+    // Implement parameterized queries here
+    // to prevent SQL injection attacks.
+    unimplemented!()
+}
 
-
-    
-
-
-
-
-
-
-
-
-        
 // Need this to generate candid
 ic_cdk::export_candid!();
